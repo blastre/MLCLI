@@ -1,4 +1,3 @@
-import argparse
 import joblib
 import json
 import logging
@@ -24,10 +23,14 @@ import groq
 warnings.filterwarnings('ignore')
 
 
-class MLSTORMPipeline:
-    def __init__(self, api_key: str, test_size: float = 0.2, batch_size: int = 10000):
-        self.api_key = api_key
-        self.client = groq.Groq(api_key=api_key)
+class MLCLIPipeline:
+    def __init__(self, api_key: str = None, test_size: float = 0.2, batch_size: int = 10000):
+        # Use the provided API key, then try GROQ_API env var, then GROQ_API_KEY env var
+        self.api_key = api_key or os.environ.get('GROQ_API') or os.environ.get('GROQ_API_KEY')
+        if not self.api_key:
+            raise ValueError("API key is required. Provide it as a parameter or set GROQ_API environment variable.")
+        
+        self.client = groq.Groq(api_key=self.api_key)
         self.test_size = test_size
         self.batch_size = batch_size
         self.logger = self._setup_logger()
@@ -37,10 +40,10 @@ class MLSTORMPipeline:
         self.categorical_cols = None
 
     def _setup_logger(self):
-        log_path = 'mlstorm_logs'
+        log_path = 'mlcli_logs'
         os.makedirs(log_path, exist_ok=True)
         logging.basicConfig(
-            filename=os.path.join(log_path, 'mlstorm.log'),
+            filename=os.path.join(log_path, 'mlcli.log'),
             format='%(asctime)s - %(levelname)s - %(message)s',
             level=logging.INFO
         )
@@ -67,7 +70,7 @@ class MLSTORMPipeline:
         )
         try:
             completion = self.client.chat.completions.create(
-                model="mixtral-8x7b-32768",
+                model="llama-3.3-70b-versatile",
                 messages=[{"role": "user", "content": prompt}]
             )
             return json.loads(completion.choices[0].message.content)
@@ -88,7 +91,8 @@ class MLSTORMPipeline:
             },
             'model_selection': {
                 'cv_folds': 5
-            }
+            },
+            'test_size': self.test_size
         }
 
     def _handle_feature_engineering(self, df: pd.DataFrame, plan: dict) -> pd.DataFrame:
@@ -131,7 +135,7 @@ class MLSTORMPipeline:
             ('cat', categorical_transformer, self.categorical_cols)
         ])
 
-    def run_pipeline(self, data_path: str, target_col: str):
+    def run_pipeline(self, data_path: str, target_col: str, output_dir: str = 'saved_models'):
         try:
             # Data Loading
             ddf = dd.read_csv(data_path)
@@ -152,6 +156,7 @@ class MLSTORMPipeline:
             train_df = pd.concat([X_train, y_train], axis=1)
             data_info = self._analyze_data(train_df, target_col)
             plan = self._get_llm_plan(data_info, target_col)
+            plan['test_size'] = self.test_size  # Add test size to plan for reporting
             
             # Feature Engineering
             X_train = self._handle_feature_engineering(X_train, plan)
@@ -212,10 +217,9 @@ class MLSTORMPipeline:
                 }
             
             # Save model
-            model_dir = 'saved_models'
-            os.makedirs(model_dir, exist_ok=True)
+            os.makedirs(output_dir, exist_ok=True)
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            model_path = os.path.join(model_dir, f'model_{timestamp}.joblib')
+            model_path = os.path.join(output_dir, f'model_{timestamp}.joblib')
             joblib.dump({'model': best_model, 'preprocessor': self.preprocessor}, model_path)
             
             return {
@@ -230,71 +234,3 @@ class MLSTORMPipeline:
         except Exception as e:
             self.logger.error(f"Pipeline failed: {str(e)}")
             raise
-
-
-def main():
-    parser = argparse.ArgumentParser(
-        description='MLSTORM Pipeline CLI with Enhanced Reporting'
-    )
-    parser.add_argument('data', type=str, help='Path to the CSV data file')
-    parser.add_argument('target', type=str, help='Name of the target column')
-    parser.add_argument('api_key', type=str, help='API key for the LLM service')
-    args = parser.parse_args()
-
-    pipeline = MLSTORMPipeline(api_key=args.api_key)
-    results = pipeline.run_pipeline(args.data, args.target)
-    
-    # Raw Data Info
-    print("\n" + "="*40)
-    print("Raw Data Summary")
-    print("="*40)
-    print(f"Dataset Shape: {results['raw_data_info']['shape'][0]} rows, {results['raw_data_info']['shape'][1]} columns")
-    print(f"Target Column: {args.target}")
-    
-    print("\nMissing Values:")
-    for col, count in results['raw_data_info']['missing_values'].items():
-        print(f"  - {col}: {count}")
-    
-    print("\nTarget Distribution:")
-    if results['task_type'] == 'classification':
-        for cls, cnt in results['raw_data_info']['target_distribution'].items():
-            print(f"  - Class {cls}: {cnt} samples")
-    else:
-        stats = results['raw_data_info']['target_distribution']
-        print(f"  - Mean: {stats['mean']:.2f}")
-        print(f"  - Std: {stats['std']:.2f}")
-        print(f"  - Range: {stats['min']:.2f} to {stats['max']:.2f}")
-
-    # Training Steps
-    print("\n" + "="*40)
-    print("Pipeline Execution Details")
-    print("="*40)
-    print(f"- Task Type: {results['task_type'].capitalize()}")
-    print(f"- Train/Test Split: {100*(1-pipeline.test_size):.0f}%/{100*pipeline.test_size:.0f}%")
-    
-    print("\nPreprocessing Steps:")
-    prep = results['plan']['preprocessing']
-    print(f"  - Numeric Features: Imputed with {prep['numeric_strategy']}")
-    print(f"  - Categorical Features: Imputed with {prep['categorical_strategy']} + OneHotEncoded")
-    print(f"  - Feature Scaling: {'Applied' if prep.get('scale_features', False) else 'Not Applied'}")
-    
-    fe = prep.get('feature_engineering', {})
-    eng_steps = []
-    if fe.get('text_features'): eng_steps.append("Text vectorization")
-    if fe.get('date_features'): eng_steps.append("Date feature extraction")
-    print(f"  - Feature Engineering: {', '.join(eng_steps) if eng_steps else 'None'}")
-
-    # Model Info
-    print("\nModel Selection:")
-    print(f"- Validation Strategy: {results['plan']['model_selection']['cv_folds']}-fold CV")
-    print(f"- Selected Model: {results['model'].__class__.__name__}")
-    
-    print("\nFinal Metrics:")
-    for metric, value in results['metrics'].items():
-        print(f"  - {metric.upper()}: {value:.4f}")
-    
-    print(f"\nModel saved to: {results['model_path']}")
-
-
-if __name__ == "__main__":
-    main()
