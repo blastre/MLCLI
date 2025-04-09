@@ -183,8 +183,6 @@ class DataTool:
         pltxt.title(f'Histogram of {column}')
         pltxt.show()
 
-
-
     def print_distribution_bars(self, df: pd.DataFrame, categorical_col: str, top_n: int = 10):
         """Render bar chart for categorical column distribution using plotext."""
         if categorical_col not in df.columns:

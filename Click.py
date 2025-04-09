@@ -169,12 +169,6 @@ def data_run(data, target, api_key, top_n, query, interactive, no_plots, no_llm)
             click.secho("\n=== Missing Data Visualization ===", fg="cyan", bold=True)
             dt.print_missing_data_chart(df)
         
-        # Show boxplots for numeric features
-        numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
-        if len(numeric_cols) > 0:
-            click.secho("\n=== Boxplots of Numeric Features ===", fg="cyan", bold=True)
-            dt.print_cli_boxplot(df, numeric_cols, max_cols=min(5, len(numeric_cols)))
-        
         # Show distribution of target if categorical
         if target in df.columns and (df[target].dtype == 'object' or df[target].nunique() < 10):
             click.secho(f"\n=== Distribution of Target ({target}) ===", fg="cyan", bold=True)
