@@ -1,3 +1,0 @@
-2025-04-09 12:55:36,876 - INFO - Dataset context cached for interactive query mode
-2025-04-09 12:55:37,931 - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
-2025-04-09 12:56:39,339 - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
