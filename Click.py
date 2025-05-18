@@ -1,5 +1,4 @@
 import os
-# Suppress LightGBM warnings by setting the environment variable before any imports that use LightGBM
 os.environ["LIGHTGBM_VERBOSITY"] = "0"
 
 import sys
@@ -8,8 +7,9 @@ import logging
 import click
 from MLtool import MLCLIPipeline
 from Datatool import DataTool
+import pandas as pd
 
-# Suppress any remaining LightGBM warnings via warnings filter and logger level
+os.environ["LIGHTGBM_VERBOSITY"] = "0"
 warnings.filterwarnings("ignore", message="No further splits with positive gain, best gain: -inf")
 logging.getLogger("lightgbm").setLevel(logging.ERROR)
 
@@ -32,6 +32,7 @@ def start():
     click.echo("    -t, --test-size FLOAT   Test split fraction (default: 0.2)")
     click.echo("    -b, --batch-size INT    Dask batch size (default: 10000)")
     click.echo("    -o, --output-dir TEXT   Directory to save models (default: saved_models)\n")
+    click.echo("    -T, --temperature FLOAT (0.00-1.00) strength of LLM (default if 0.7)\n")
     
     click.secho("data-run", fg="green", bold=True)
     click.echo("  Analyze & visualize your dataset with LLM support.")
@@ -53,16 +54,29 @@ def start():
 @click.option("-t", "--test-size", default=0.2, help="Test split fraction")
 @click.option("-b", "--batch-size", default=10000, help="Dask batch size")
 @click.option("-o", "--output-dir", default="saved_models", help="Where to save models")
-def ml_run(data, target, api_key, test_size, batch_size, output_dir):
-    """Run ML pipeline (classification/regression) with detailed output."""
+@click.option("-T", "--temperature", type=float, default=None, help="Temperature for pipeline decision power (range: 0.0 to 1.0)")
+def ml_run(data, target, api_key, test_size, batch_size, temperature, output_dir):
+
     if not api_key:
         raise click.UsageError("API key required for MLtool (use -k or env).")
     os.makedirs(output_dir, exist_ok=True)
-    click.secho(f"[MLtool] test_size={test_size}, batch_size={batch_size}", fg="cyan", bold=True)
-    
-    pipe = MLCLIPipeline(api_key, test_size=test_size, batch_size=batch_size)
-    # Improved progress bar with a colored fill character
-    with click.progressbar(length=1, label="Running ML pipeline", fill_char=click.style('#', fg='green')) as bar:
+    click.secho(
+        f"[MLtool] test_size={test_size}, batch_size={batch_size}, temperature={temperature}",
+        fg="cyan", bold=True
+    )
+
+    # Pass temperature into the pipeline constructor
+    pipe = MLCLIPipeline(
+        api_key,
+        test_size=test_size,
+        batch_size=batch_size,
+        temperature=temperature
+    )
+    with click.progressbar(
+        length=1,
+        label="Running ML pipeline",
+        fill_char=click.style('#', fg='green')
+    ) as bar:
         res = pipe.run_pipeline(data, target, output_dir)
         bar.update(1)
     
@@ -120,7 +134,7 @@ def ml_run(data, target, api_key, test_size, batch_size, output_dir):
     
     click.secho(f"\nModel saved to: {res['model_path']}", fg="bright_magenta")
 
-# ----- Datatool runner remains unchanged, with minor design tweaks for consistency -----
+# ----- Datatool runner 
 @cli.command("data-run")
 @click.argument("data", type=click.Path(exists=True))
 @click.argument("target", type=str)
@@ -169,12 +183,6 @@ def data_run(data, target, api_key, top_n, query, interactive, no_plots, no_llm)
             click.secho("\n=== Missing Data Visualization ===", fg="cyan", bold=True)
             dt.print_missing_data_chart(df)
         
-        # Show boxplots for numeric features
-        numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
-        if len(numeric_cols) > 0:
-            click.secho("\n=== Boxplots of Numeric Features ===", fg="cyan", bold=True)
-            dt.print_cli_boxplot(df, numeric_cols, max_cols=min(5, len(numeric_cols)))
-        
         # Show distribution of target if categorical
         if target in df.columns and (df[target].dtype == 'object' or df[target].nunique() < 10):
             click.secho(f"\n=== Distribution of Target ({target}) ===", fg="cyan", bold=True)
@@ -203,31 +211,34 @@ def data_run(data, target, api_key, top_n, query, interactive, no_plots, no_llm)
         if interactive:
             run_query_loop(dt, info, corr, target)
 
-def run_query_loop(dt, info, corr, target):
-    """Interactive query loop for repeatedly asking questions about the dataset."""
+def run_query_loop(dt: DataTool, info: dict, corr: pd.DataFrame, target: str):
+    """Interactive query loop for context-aware questions about the dataset."""
     click.secho("\n=== Interactive Query Mode ===", fg="bright_green", bold=True)
     click.echo("Enter questions about the dataset. Type 'exit', 'quit', or press Ctrl+C to exit.")
-    
+
+    conversation_history: List[Tuple[str, str]] = []
+
     try:
         while True:
-            query = click.prompt("\nQuery", type=str)
-            query = query.strip()
-            
+            query = click.prompt("\nQuery", type=str).strip()
             if query.lower() in ('exit', 'quit', 'q'):
                 click.secho("Exiting query mode.", fg="yellow")
                 break
-                
             if not query:
                 continue
-                
+
             click.secho("Processing query...", fg="cyan")
-            answer = dt.ask_query(query, info, corr, target)
+            # Pass conversation history into ask_query
+            answer = dt.ask_query(query, conversation_history, info, corr, target)
+
+            # Append to history
+            conversation_history.append((query, answer))
+
             click.secho("\n=== Answer ===", fg="yellow", bold=True)
             click.echo(answer)
-            
+
     except KeyboardInterrupt:
         click.secho("\nExiting query mode.", fg="yellow")
-        
     click.echo("Thank you for using DataTool!")
 
 if __name__ == "__main__":

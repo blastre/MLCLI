@@ -24,15 +24,16 @@ warnings.filterwarnings('ignore')
 
 
 class MLCLIPipeline:
-    def __init__(self, api_key: str = None, test_size: float = 0.2, batch_size: int = 10000):
-        # Use the provided API key, then try GROQ_API env var, then GROQ_API_KEY env var
+    def __init__(self, api_key: str = None, test_size: float = 0.2, batch_size: int = 10000, temperature: float = None):
+        # Use the provided API key or environment variables
         self.api_key = api_key or os.environ.get('GROQ_API') or os.environ.get('GROQ_API_KEY')
         if not self.api_key:
             raise ValueError("API key is required. Provide it as a parameter or set GROQ_API environment variable.")
-        
         self.client = groq.Groq(api_key=self.api_key)
         self.test_size = test_size
         self.batch_size = batch_size
+        # New temperature parameter for LLM calls
+        self.temperature = temperature
         self.logger = self._setup_logger()
         self.preprocessor = None
         self.task_type = None
@@ -69,10 +70,17 @@ class MLCLIPipeline:
             f"Dataset info: {json.dumps(data_info)}. Target column: {target_col}."
         )
         try:
-            completion = self.client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                messages=[{"role": "user", "content": prompt}]
-            )
+            # Build chat completion parameters
+            params = {
+                'model': "llama-3.3-70b-versatile",
+                'messages': [{"role": "user", "content": prompt}]
+            }
+            if self.temperature is not None:
+                params['temperature'] = self.temperature
+            else:
+                # fallback to groq-specific managing_strength if temperature not set
+                params['managing_strength'] = 0.7
+            completion = self.client.chat.completions.create(**params)
             return json.loads(completion.choices[0].message.content)
         except Exception as e:
             self.logger.error(f"LLM query failed: {str(e)}")

@@ -1,6 +1,7 @@
+# --- Datatool.py (updated for conversation history) ---
 """
 Datatool: Core library for dataset analysis, in-terminal visualization,
-and LLM-driven summaries/queries using GROQ API.
+LLM-driven summaries/queries using GROQ API, with interactive context history.
 """
 import os
 import json
@@ -183,8 +184,6 @@ class DataTool:
         pltxt.title(f'Histogram of {column}')
         pltxt.show()
 
-
-
     def print_distribution_bars(self, df: pd.DataFrame, categorical_col: str, top_n: int = 10):
         """Render bar chart for categorical column distribution using plotext."""
         if categorical_col not in df.columns:
@@ -281,39 +280,41 @@ class DataTool:
             return "Failed to generate summary via LLM."
 
     def _cache_context(self, data_info: dict, corr_matrix: pd.DataFrame, target_col: str):
-        """Cache the dataset context for reuse in query loop."""
+        """Cache dataset info and correlations for reuse in interactive queries."""
         if target_col in corr_matrix.columns:
             top_corrs = corr_matrix[target_col].abs().drop(labels=[target_col]).sort_values(ascending=False).head(5).to_dict()
         else:
             top_corrs = {}
-            
-        # Store the context in memory for quick reuse
         self.context_cache = {
             'data_info': data_info,
             'top_correlations': top_corrs,
             'target_col': target_col,
             'initial_prompt': (
-                f"You are an expert data scientist analyzing a dataset.\n"
-                f"Key dataset characteristics: {len(data_info['column_names'])} columns, {data_info['rows']} rows.\n"
-                f"Target column: {target_col}.\n"
-                f"Use this context to answer questions about the dataset."
+                f"You are an expert data scientist analyzing a dataset."
+                f" Key dataset characteristics: {len(data_info['column_names'])} columns, {data_info['rows']} rows."
+                f" Target column: {target_col}."
             )
         }
-        
-        # Log the creation of context cache
         self.logger.info("Dataset context cached for interactive query mode")
 
-    def ask_query(self, query: str, data_info: dict = None, corr_matrix: pd.DataFrame = None, target_col: str = None) -> str:
-        """Ask a custom query to the GROQ LLM with dataset context.
-        Uses cached context if available, otherwise requires data_info, corr_matrix, target_col.
-        """
-        # Use cached context if available, otherwise create a new context
+    def ask_query(
+        self,
+        query: str,
+        conversation_history: Optional[List[Tuple[str, str]]] = None,
+        data_info: dict = None,
+        corr_matrix: pd.DataFrame = None,
+        target_col: str = None
+    ) -> str:
+        """Ask a custom query to the GROQ LLM with dataset and conversation context."""
+        # Ensure context is available
         if self.context_cache is None and (data_info is None or target_col is None):
             return "Error: Dataset context not available. Run analysis first."
-        
-        if self.context_cache is not None:
+
+        # Determine which context to use
+        if self.context_cache:
             context = self.context_cache
         else:
+            # Fallback: build temporary context
             if target_col in corr_matrix.columns:
                 top = corr_matrix[target_col].abs().drop(labels=[target_col]).sort_values(ascending=False).head(5).to_dict()
             else:
@@ -322,17 +323,27 @@ class DataTool:
                 'data_info': data_info,
                 'top_correlations': top,
                 'target_col': target_col,
-                'initial_prompt': f"You are analyzing a dataset with {len(data_info['column_names'])} columns and {data_info['rows']} rows."
+                'initial_prompt': (
+                    f"You are analyzing a dataset with {len(data_info['column_names'])} columns "
+                    f"and {data_info['rows']} rows."
+                )
             }
-        
-        prompt = (
-            f"{context['initial_prompt']}\n\n"
-            f"Dataset info: {json.dumps(context['data_info'])}\n"
+
+        # Build the prompt with conversation history
+        prompt = context['initial_prompt']
+        if conversation_history:
+            for idx, (prev_q, prev_a) in enumerate(conversation_history, start=1):
+                prompt += f"\n\nPrevious Q{idx}: {prev_q}\nPrevious A{idx}: {prev_a}"
+
+        # Append dataset info and current question
+        prompt += (
+            f"\n\nDataset info: {json.dumps(context['data_info'])}\n"
             f"Top correlations with target ({context['target_col']}): {json.dumps(context['top_correlations'])}\n\n"
-            f"Question: {query}\n\n"
-            f"Provide a clear, concise answer based on the dataset information."
+            f"Current Question: {query}\n\n"
+            f"Provide a clear, concise answer based on the dataset information and prior conversation."
         )
-        
+
+        # Send to LLM
         try:
             completion = self.client.chat.completions.create(
                 model="llama-3.3-70b-versatile",

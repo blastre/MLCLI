@@ -9,3 +9,4 @@ tqdm==4.67.1
 click==8.1.7
 plotext==5.4.6      # ASCII‑scatter & line plots
 rich==13.4.1        # Heatmaps & colored tables
+streamlit
