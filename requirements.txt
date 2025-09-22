@@ -1,12 +1,12 @@
-dask==2024.8.0
-groq==0.18.0
-joblib==1.3.2
-numpy==2.2.3
-pandas==2.2.3
-pycaret==3.3.2
-scikit_learn==1.4.2
-tqdm==4.67.1
-click==8.1.7
-plotext==5.4.6      # ASCII‑scatter & line plots
-rich==13.4.1        # Heatmaps & colored tables
+dask
+groq
+joblib
+numpy
+pandas
+pycaret
+scikit_learn
+tqdm
+click
+plotext
+rich
 streamlit
